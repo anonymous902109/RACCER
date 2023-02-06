@@ -14,7 +14,7 @@ torch==1.12.1
 ### Installation
 
 ```{bash}
-conda create -n raccer
+conda create -n raccer python=3.7.13
 conda activate raccer
 pip install -r requirements.txt
 ```
