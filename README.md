@@ -3,7 +3,7 @@ Code for paper: RACCER: Towards Reachable and Certain Counterfactual Explanation
 
 ### Requirements
 
-```{bash}
+```{shell}
 python = 3.7
 pymoo = 0.6.0
 tensorflow==1.14.0
