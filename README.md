@@ -4,9 +4,9 @@ Code for paper: RACCER: Towards Reachable and Certain Counterfactual Explanation
 ### Requirements
 
 ```{shell}
-python = 3.7.13
-gym = 0.22
-pymoo = 0.6.0
+python==3.7.13
+gym==0.22
+pymoo==0.6.0
 tensorflow==1.14.0
 torch==1.12.1
 ```
