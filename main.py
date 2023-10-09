@@ -1,98 +1,102 @@
 import json
-import math
 
-import chess
-import chess.engine
-import torch
-import pandas as pd
+from src.baselines.fid_raccer import FidRACCER
+from src.baselines.ganterfactual import GANterfactual
+from src.baselines.mcts_raccer import MCTSRACCER
 
-from src.envs.chessenv import ChessEnv
-from src.models.chess_bb_model import ChessBBModel
-from src.models.gridworld_bb_model import GridworldBBModel
-from src.optimization.autoenc import AutoEncoder
-from src.optimization.genetic_baseline import GeneticBaseline
-from src.models.dataset import Dataset
+from src.envs.farm0 import Farm0
+from src.envs.frozen_lake import FrozenLake
 from src.envs.gridworld import Gridworld
-from src.objectives.baseline_objs import BaselineObjectives
-from src.objectives.rl_objs import RLObjs
+from src.evaluation.eval import evaluate_objectives, get_realistic_df, split_df, print_summary_split, evaluate_all
+from src.models.bb_model import BBModel
+from src.optimization.objs.fid_obj import FidObj
+from src.optimization.objs.game_obj import GameObj
+from src.optimization.objs.sl_obj import SLObj
 from src.tasks.task import Task
-from src.optimization.monte_carlo_cfsearch import MCTSSearch
-from src.utils.utils import seed_everything, load_fact
+from src.utils.utils import seed_everything, load_facts_from_summary, load_facts_from_csv, generate_summary_states
 
 
-def main():
+def main(task_name, agent_type):
+    print('TASK = {} AGENT_TYPE = {}'.format(task_name, agent_type))
     seed_everything(seed=1)
 
-    task_name = 'chess'
+    training_timesteps = 300000
+    if agent_type == 'suboptim':
+        training_timesteps = training_timesteps / 10
 
     # define paths
-    model_path = 'trained_models/{}'.format(task_name)
-    dataset_path = 'datasets/{}/dataset.csv'.format(task_name)
-    fact_file = 'fact/{}.json'.format(task_name)
+    model_path = 'trained_models/{}_{}'.format(task_name, agent_type)
+    fact_csv_dataset_path = 'datasets/{}/facts.csv'.format(task_name, agent_type)
+    fact_json_path = 'fact/{}.json'.format(task_name)
     param_file = 'params/{}.json'.format(task_name)
+    generator_path = 'trained_models/generator_{}_{}.ckpt'.format(task_name, agent_type)
 
     if task_name == 'gridworld':
         env = Gridworld()
-        bb_model = GridworldBBModel(env, model_path)
-        enc_layers = [env.state_dim, 128, 16]
-        max_actions = 5
-    elif task_name == 'chess':
-        engine_path = 'trained_models/stockfish_15.exe'
-        engine = chess.engine.SimpleEngine.popen_uci(engine_path)
-        env = ChessEnv(engine)
-        enc_layers = [env.state_dim, 512, 512, 32]
-        max_actions = 1
+        gym_env = env
+    elif task_name == 'frozen_lake':
+        env = FrozenLake()
+        gym_env = env
+    elif task_name == 'farm0':
+        env = Farm0()
+        gym_env = env
 
-        bb_model = ChessBBModel(env, engine_path)
+    bb_model = BBModel(gym_env, model_path, training_timesteps)
 
     # load parameters
     with open(param_file, 'r') as f:
         params = json.load(f)
-        print('Task = {} Parameters = {}'.format(task_name, params))
-
-    # define models
-    dataset = Dataset(env, bb_model, dataset_path)
-    train_dataset, test_dataset = dataset.split_dataset(frac=0.8)
-    vae = AutoEncoder(layers=enc_layers)
-    vae.fit(train_dataset, test_dataset)
-    enc_data = vae.encode(torch.tensor(dataset._dataset.values))[0]
-
-    # # define objectives
-    baseline_obj = BaselineObjectives(env, bb_model, vae, enc_data, env.state_dim)
-    rl_obj = RLObjs(env, bb_model, params, max_actions=max_actions)
+        print('Task = {}\nParameters = {}'.format(task_name, params))
 
     # get facts
-    if task_name == 'gridworld':
-        try:
-            dataset_path = 'datasets/{}/facts.csv'.format(task_name)
-            facts = pd.read_csv(dataset_path).values
-        except FileNotFoundError:
-            n_facts = 100
-            facts = dataset._dataset.sample(n=n_facts)
-            facts.to_csv(dataset_path, index=False)
-        targets = None
-    elif task_name == 'chess':
-        facts, targets = load_fact(fact_file)
+    facts, targets = load_facts_from_csv(fact_csv_dataset_path, env, bb_model)
+    # facts, targets = load_facts_from_json(fact_json_path)
+    # facts, targets = load_facts_from_summary(env, bb_model)
 
-    # define methods n
-    BO_GEN = GeneticBaseline(env, bb_model, dataset._dataset, baseline_obj, params)
-    BO_MCTS = MCTSSearch(env, bb_model, dataset._dataset, baseline_obj, params, c=1)
-    RL_MCTS = MCTSSearch(env, bb_model, dataset._dataset, rl_obj, params, c=1/math.sqrt(2))
+    # define methods
+    fid_raccer = FidRACCER(env, bb_model, params)
+    mcts_raccer = MCTSRACCER(env, bb_model, params)
+    ganterfactual = GANterfactual(env, bb_model, params, generator_path)
 
-    methods = [BO_GEN, BO_MCTS, RL_MCTS]
-    method_names = ['BO_GEN', 'BO_MCTS', 'RL_MCTS']
+    methods = [fid_raccer, ganterfactual]
+    method_names = ['FidRACCER', 'GANterfactual']
 
-    for i, m in enumerate(methods):
-        print('\n------------------------ {} ---------------------------------------\n'.format(method_names[i]))
-        eval_path = 'eval/{}/{}/rl_obj_results'.format(task_name, method_names[i])
-        gen_nbhd = True if method_names[i] == 'BO_GEN' else False
-        task = Task(task_name, env, bb_model, dataset, m, method_names[i], rl_obj, [rl_obj, baseline_obj], eval_path,
-                    nbhd=gen_nbhd)
+    # define objectives
+    sl_obj = SLObj(env, bb_model, params)
+    game_obj = GameObj(env, bb_model, params)
+    fid_obj = FidObj(env, bb_model, params)
 
-        faulty_list = [11, 13, 15, 17, 22, 25, 26, 27, 28, 38, 43, 44]
+    # define eval objectives
+    eval_objs = [[sl_obj, game_obj, fid_obj], [sl_obj, game_obj, fid_obj]]
 
-        task.run_experiment([facts[i] for i in range(len(facts)) if i in faulty_list], [targets[i] for i in range(len(targets)) if i in faulty_list])
+    # for i, m in enumerate(methods):
+    #     print('\n------------------------ {} ---------------------------------------\n'.format(method_names[i]))
+    #     eval_path = 'eval/{}/{}/{}'.format(task_name, method_names[i], agent_type)
+    #     task = Task(task_name, env, bb_model, m, method_names[i], eval_path, eval_objs[i], params)
+    #
+    #     task.run_experiment(facts[1:],  targets)
+    #
+    evaluate_all(tasks=['frozen_lake', 'gridworld', 'farm0'],
+                 agent_types=['optim', 'suboptim', 'non_optim'],
+                 method_names=method_names,
+                 eval_objs=[sl_obj, game_obj, fid_obj])
+
+    # eval_path_template = 'eval/{}/{}/{}'
+    # eval_paths = [eval_path_template.format(task_name, method_name, agent_type) for method_name in method_names]
+    # realistic_df = get_realistic_df(eval_paths, targets=[4, 5])
+    # summary = generate_summary_states(env, bb_model, realistic_df)
+    # indices = split_df(summary)
+    # #
+    # print_summary_split(summary, *indices, eval_paths, targets=[4, 5])
 
 
 if __name__ == '__main__':
-    main()
+    # main('farm0', 'optim')
+    # main('farm0', 'suboptim')
+
+    # main('gridworld', 'optim')
+    main('gridworld', 'non_optim')
+    # main('gridworld', 'suboptim')
+    #
+    # main('frozen_lake', 'optim')
+    # main('frozen_lake', 'suboptim')
