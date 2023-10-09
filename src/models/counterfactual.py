@@ -1,10 +1,10 @@
 class CF:
 
-    def __init__(self, cf_state, terminal, actions, cumulative_reward, value, searched_nodes, time):
-        self.cf_state = cf_state
-        self.terminal = terminal
-        self.actions = actions
-        self.cumulative_reward = cumulative_reward
+    def __init__(self, recourse, cf, rewards, value=0):
+
+        self.recourse = recourse
+        self.reward_dict = rewards
         self.value = value
-        self.searched_nodes = searched_nodes
-        self.time = time
+        self.cf = cf
+
+

@@ -1,9 +1,0 @@
-{
-    "ts_n_iter": 1,
-    "ts_n_expand": 50,
-    "n_sim": 20,
-    "gen_sample_size": 100,
-    "gen_iter": 10
-}
-
-

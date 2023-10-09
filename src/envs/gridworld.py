@@ -4,38 +4,41 @@ import random
 import gym
 import numpy as np
 
+from src.envs.abs_env import AbstractEnv
 
-class Gridworld(gym.Env):
+
+class Gridworld(AbstractEnv):
 
     def __init__(self):
+        super(Gridworld, self).__init__()
+
         self.world_dim = 5
 
-        self.state_dim = self.world_dim ** 2 + 1
+        self.state_dim = 26
 
         self.chopping = 0
-        self.max_chopping = 5
+        self.max_chopping = 1
 
         self.step_pen = -1
-        self.goal_rew = 10
+        self.goal_rew = 1
 
         self.max_steps = 100
         self.steps = 0
 
-        self.lows = np.array([0]*self.state_dim)
+        self.lows = np.array([0] * self.state_dim)
         self.highs = np.array([5] * 25 + [self.max_chopping])
-        self.observation_space = gym.spaces.Box(self.lows, self.highs, shape=(26, ))
+        self.observation_space = gym.spaces.Box(self.lows, self.highs, shape=(self.state_dim, ))
         self.action_space = gym.spaces.Discrete(6)
 
-        self.state = np.zeros((self.state_dim, ))
-
-        self.num_trees = 2
+        self.max_feature = 24
 
         self.ACTIONS = {'RIGHT': 0, 'DOWN': 1, 'LEFT': 2, 'UP': 3, 'CHOP': 4, 'SHOOT': 5}
         self.OBJECTS = {'AGENT': 1, 'MONSTER': 2, 'TREE': 3, 'KILLED_MONSTER': -1}
 
-        self.TREE_TYPES = {3: 5, 4: 3, 5: 1}
-        self.FERTILITY = {2: 0.1, 7: 0.5, 12: 0.9, 17: 0.5, 22: 0.1}
-        self.TREE_POS_TYPES = {2: 5, 7: 4, 12: 3, 17: 4, 22: 5}
+        self.TREE_TYPES = {3: 1, 4: 1}  # indicates # steps needed to destroy tree
+        self.TREE_REWS = {3: -1, 4: -1}  # penalty for destroying object
+        self.FERTILITY = {2: 0.2, 7: 0.2, 12: 0.2, 17: 0.2, 22: 0.2}  # prob of regrowth each step
+        self.TREE_POS_TYPES = {2: 3, 7: 4, 12: 4, 17: 4, 22: 3}
         self.TREE_POS = [2, 7, 12, 17, 22]
 
     def step(self, action):
@@ -50,7 +53,7 @@ class Gridworld(gym.Env):
         return new_state.flatten(), rew, done, {}
 
     def create_state(self, agent, monster, trees, chopping, chopped_trees=[], killed_monster=False):
-        state = [0.0] * self.state_dim
+        state = [0] * self.state_dim
         state[-1] = chopping
         state[agent] = self.OBJECTS['AGENT']
 
@@ -70,14 +73,14 @@ class Gridworld(gym.Env):
         return np.array(state)
 
     def get_new_state(self, state, action):
-        agents, monsters, trees = self.get_objects(state)
-        agent = agents[0]
-        monster = monsters[0]
+        agent, monster, trees = self.get_objects(state)
 
         facing_monster = self.facing_obstacle(agent, [monster], action)
         facing_tree = self.facing_obstacle(agent, [list(t.keys())[0] for t in trees], action)
 
         chopped_trees = []
+
+        rew = self.step_pen
 
         if action == 0:  # MOVE
             self.chopping = 0
@@ -116,6 +119,8 @@ class Gridworld(gym.Env):
                     chopped_trees.append(t_pos)
                     self.chopping = 0
 
+                    rew = self.TREE_REWS[t_type]
+
         elif action == 5:  # SHOOT
             self.chopping = 0
             if (int(agent / self.world_dim) == int(monster / self.world_dim)) or (agent % self.world_dim == monster % self.world_dim):
@@ -130,9 +135,7 @@ class Gridworld(gym.Env):
 
         new_state = self.create_state(agent, monster, trees, self.chopping, chopped_trees)
 
-        self.state = new_state
-
-        return new_state, self.steps >= self.max_steps, self.step_pen
+        return new_state, self.steps >= self.max_steps, rew
 
     def regrow(self, trees, agent, monster, chopped_trees):
         tree_occupied = [list(t.keys())[0] for t in trees]
@@ -204,7 +207,7 @@ class Gridworld(gym.Env):
             monster = random.randint(0, self.world_dim * self.world_dim - 1)
 
         tree_wall = np.array(self.TREE_POS)
-        tree_pos = np.random.uniform(0, 1, 5) > 0.2
+        tree_pos = np.random.uniform(0, 1, 5) > 0.5
         tree_pos = tree_wall[tree_pos]
         trees = []
         for t in tree_pos:
@@ -228,7 +231,7 @@ class Gridworld(gym.Env):
         if isinstance(state, list):
             state = np.array(state)
 
-        agents, monsters, trees = self.get_objects(state)
+        agent, monster, trees = self.get_objects(state)
 
         rendering = '---------------'
         print('STATE = {}'.format(state))
@@ -237,9 +240,9 @@ class Gridworld(gym.Env):
             if i % self.world_dim == 0:
                 rendering += '\n'
 
-            if i in agents:
+            if i == agent:
                 rendering += ' A '
-            elif i in monsters:
+            elif i == monster:
                 rendering += ' M '
             else:
                 tree_found = False
@@ -259,19 +262,25 @@ class Gridworld(gym.Env):
     def get_objects(self, x):
         x = np.array(x).squeeze()
 
-        agent = list(np.where(x[0:self.world_dim * self.world_dim] == self.OBJECTS['AGENT'])[0])
-        monster = list(np.where(x[0:self.world_dim * self.world_dim] == self.OBJECTS['MONSTER'])[0])
+        try:
+            agent = list(np.where(x == self.OBJECTS['AGENT'])[0])[0]
+            monster = list(np.where(x == self.OBJECTS['MONSTER'])[0])[0]
+        except IndexError:
+            return None, None, None
 
         trees = []
-        for t_type in self.TREE_TYPES.keys():
-            tree_type_list = list(np.where(x[0:self.world_dim * self.world_dim] == t_type)[0])
-            for t_pos in tree_type_list:
-                trees.append({t_pos: t_type})
+        for t_pos in self.TREE_POS:
+            t_type = x[t_pos]
+            if t_type in list(self.TREE_TYPES.keys()):
+                trees.append({t_pos: int(t_type)})
 
         return agent, monster, trees
 
     def realistic(self, x):
         agent, monster, trees = self.get_objects(x)
+
+        if agent is None:
+            return False
 
         total_trees = len(trees)
 
@@ -285,9 +294,9 @@ class Gridworld(gym.Env):
             if t_types[i] != self.TREE_POS_TYPES[t]:
                 return False
 
-        if len(agent) != 1:
+        if agent > 25:
             return False
-        if len(monster) != 1:
+        if monster > 25:
             return False
         if total_trees > 5:
             return False
@@ -295,12 +304,13 @@ class Gridworld(gym.Env):
         return True
 
     def actionable(self, x, fact):
-        monster = list(np.where(fact == self.OBJECTS['MONSTER'])[0])
-
-        if len(monster) != 1:
-            return False
-
-        return abs(x[monster] == self.OBJECTS['MONSTER']).item()
+        # monster = list(np.where(fact == self.OBJECTS['MONSTER'])[0])
+        #
+        # if len(monster) != 1:
+        #     return False
+        #
+        # return abs(x[monster] == self.OBJECTS['MONSTER']).item()
+        return True
 
     def generate_state_from_json(self, json_dict):
         agent = json_dict['agent']
