@@ -1,11 +1,10 @@
 {
-    "layer_shapes": [[32, 512], [512, 512], [512, 26]],
+    "layer_shapes": [[12, 128], [128, 7]],
     "ts_n_iter": 300,
-    "ts_n_expand": 20,
+    "ts_n_expand": 5,
     "n_sim": 10,
     "max_actions": 20,
     "max_level": 20,
     "c": 0.7
 }
-
 

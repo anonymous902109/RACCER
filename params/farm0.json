@@ -1,0 +1,10 @@
+{
+    "layer_shapes": [[15, 256], [256, 12]],
+    "ts_n_iter": 300,
+    "ts_n_expand": 20,
+    "n_sim": 10,
+    "max_actions": 10,
+    "max_level": 10,
+    "c": 0.7
+}
+
