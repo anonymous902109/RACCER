@@ -5,7 +5,7 @@ RACCER is an algorithm for generating counterfactual explanations for explaining
 
 More information can be found in our paper: RACCER: Towards Reachable and Certain Counterfactual Explanations for Reinforcement Learning
 
-![Counterfactual Semifactual Explanations in RL](img/semifactual_generation.png "Generating semifactual explanations in RL")
+
 
 ### Requirements
 ```bash
